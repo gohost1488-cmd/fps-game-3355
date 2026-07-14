@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html><head><title>fps-game-3355</title>
+<style>
+body{margin:0;overflow:hidden;background:#000;font-family:Arial}
+#ui{position:absolute;top:10px;left:10px;color:white;z-index:10}
+</style>
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+</head><body>
+<canvas id="c"></canvas><div id="ui">HP: 100 | Kills: 0</div>
+<script>
+const canvas=document.getElementById('c');
+const engine=new BABYLON.Engine(canvas,true);
+const scene=new BABYLON.Scene(engine);
+scene.clearColor=new BABYLON.Color3(0.1,0.15,0.25);
+
+const camera=new BABYLON.ArcRotateCamera("cam",0,1.2,20,BABYLON.Vector3.Zero(),scene);
+camera.attachControl(canvas,true);
+camera.lowerRadiusLimit=5;
+camera.upperRadiusLimit=40;
+
+const light=new BABYLON.HemisphericLight("light",new BABYLON.Vector3(0,1,0),scene);
+
+// Ground
+const ground=BABYLON.MeshBuilder.CreateGround("ground",{width:50,height:50},scene);
+const groundMat=new BABYLON.StandardMaterial("gmat",scene);
+groundMat.diffuseColor=new BABYLON.Color3(0.2,0.3,0.2);
+ground.material=groundMat;
+
+// Players
+let playerId=null;
+let playerMeshes={};
+let myMesh=null;
+const keys={};
+
+const ws=new WebSocket(`ws://${location.host}/ws`);
+
+ws.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if(d.type==='init'){
+        playerId=d.player_id;
+        d.players.forEach(p=>spawnPlayer(p));
+    }
+    else if(d.type==='player_joined')spawnPlayer(d.player);
+    else if(d.type==='player_left')removePlayer(d.player_id);
+    else if(d.type==='state'){
+        d.players.forEach(p=>updatePlayer(p));
+        // Update bullets
+    }
+};
+
+function spawnPlayer(p){
+    const box=BABYLON.MeshBuilder.CreateBox(p.id,{size:1.5},scene);
+    const mat=new BABYLON.StandardMaterial("m_"+p.id,scene);
+    mat.diffuseColor=BABYLON.Color3.FromHexString(p.color);
+    box.material=mat;
+    box.position.x=p.x;
+    box.position.z=p.z;
+    box.position.y=0.75;
+    playerMeshes[p.id]=box;
+    if(p.id===playerId)myMesh=box;
+}
+
+function updatePlayer(p){
+    if(playerMeshes[p.id]){
+        playerMeshes[p.id].position.x=p.x;
+        playerMeshes[p.id].position.z=p.z;
+    }
+}
+
+function removePlayer(pid){
+    if(playerMeshes[pid]){playerMeshes[pid].dispose();delete playerMeshes[pid]}
+}
+
+document.onkeydown=e=>keys[e.key]=true;
+document.onkeyup=e=>keys[e.key]=false;
+
+canvas.onclick=e=>{
+    if(!myMesh)return;
+    const forward=camera.getForwardRay().direction;
+    const dx=forward.x;
+    const dz=forward.z;
+    ws.send(JSON.stringify({shoot:{dx:dx,dz:dz}}));
+    // Flash effect
+    const flash=BABYLON.MeshBuilder.CreateSphere("flash",{diameter:0.3},scene);
+    flash.position=myMesh.position.clone();
+    flash.position.y=0.75;
+    const fmat=new BABYLON.StandardMaterial("fmat",scene);
+    fmat.emissiveColor=new BABYLON.Color3(1,1,0);
+    flash.material=fmat;
+    setTimeout(()=>flash.dispose(),100);
+};
+
+setInterval(()=>{
+    if(!playerId)return;
+    let mx=0,mz=0;
+    if(keys['w']||keys['ArrowUp'])mz=1;
+    if(keys['s']||keys['ArrowDown'])mz=-1;
+    if(keys['a']||keys['ArrowLeft'])mx=-1;
+    if(keys['d']||keys['ArrowRight'])mx=1;
+    if(mx||mz)ws.send(JSON.stringify({move:{x:mx,z:mz}}));
+    // Footstep sound
+    if(!window.audioCtx)window.audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=window.audioCtx.createOscillator();
+    const gain=window.audioCtx.createGain();
+    osc.connect(gain);gain.connect(window.audioCtx.destination);
+    osc.frequency.value=100+Math.random()*50;
+    gain.gain.value=0.02;
+    osc.start();osc.stop(window.audioCtx.currentTime+0.05);
+},50);
+
+engine.runRenderLoop(()=>scene.render());
+window.addEventListener('resize',()=>engine.resize());
+</script></body></html>
